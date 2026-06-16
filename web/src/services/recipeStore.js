@@ -103,14 +103,24 @@ export const recipeStore = {
   getAll: () => {
     const data = localStorage.getItem("my_recipes");
     if (!data) {
-      localStorage.setItem("my_recipes", JSON.stringify(DEFAULT_RECIPES));
-      return DEFAULT_RECIPES;
+      localStorage.setItem("my_recipes", JSON.stringify([]));
+      return [];
     }
     try {
-      return JSON.parse(data);
+      const recipes = JSON.parse(data);
+      const getCreatedAt = (recipe) => {
+        if (recipe.createdAt) return recipe.createdAt;
+        if (typeof recipe.id === 'string' && recipe.id.startsWith("recipe-")) {
+          const parts = recipe.id.split("-");
+          const ts = parseInt(parts[1], 10);
+          if (!isNaN(ts)) return ts;
+        }
+        return 0;
+      };
+      return recipes.sort((a, b) => getCreatedAt(b) - getCreatedAt(a));
     } catch (e) {
       console.error("Failed to parse recipes from localStorage", e);
-      return DEFAULT_RECIPES;
+      return [];
     }
   },
 
@@ -125,9 +135,11 @@ export const recipeStore = {
 
   add: (recipe) => {
     const recipes = recipeStore.getAll();
+    const timestamp = Date.now();
     const newRecipe = {
       ...recipe,
-      id: recipe.id || `recipe-${Date.now()}`
+      id: recipe.id || `recipe-${timestamp}`,
+      createdAt: recipe.createdAt || timestamp
     };
     recipes.unshift(newRecipe);
     recipeStore.saveAll(recipes);

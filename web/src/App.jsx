@@ -114,9 +114,9 @@ export default function App() {
             style={{ cursor: 'pointer' }}
           >
             <ChefHat size={24} strokeWidth={2.5} />
-            <span>MyReceipies</span>
+            <span>MyRecipes</span>
           </div>
-          <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-light)', backgroundColor: 'var(--primary-light)', padding: '4px 10px', borderRadius: '12px', color: 'var(--primary)' }}>
+          <div style={{ fontSize: '12px', fontWeight: 600, backgroundColor: 'var(--primary-light)', padding: '4px 10px', borderRadius: '12px', color: 'var(--primary)' }}>
             {recipes.length} Recipe{recipes.length !== 1 ? 's' : ''}
           </div>
         </header>
@@ -213,7 +213,7 @@ export default function App() {
             <h4 style={{ fontWeight: 700, color: 'var(--primary)', marginBottom: '4px', display: 'flex', alignItems: 'center', gap: '4px' }}>
               <HelpCircle size={12} /> About AI Parsing
             </h4>
-            To parse recipes directly from cooking websites, we use Google's Gemini 1.5 Flash model. 
+            To parse recipes directly from cooking websites, we use Google's Gemini 3.1 Flash-Lite model. 
             If you don't have an API key, you can get one for free at Google AI Studio. 
             When no key is configured, a mock recipe simulator will be loaded for demonstration.
           </div>
