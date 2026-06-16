@@ -119,7 +119,19 @@ object GeminiParser {
                 )
             }
 
-            return@withContext parseFromText(htmlContent, apiKey)
+            val isYouTube = urlLower.contains("youtube.com") || urlLower.contains("youtu.be")
+            val contentToParse = if (isYouTube) {
+                val desc = extractYouTubeDescription(htmlContent)
+                if (desc.isEmpty()) {
+                    htmlContent
+                } else {
+                    desc
+                }
+            } else {
+                htmlContent
+            }
+
+            return@withContext parseFromText(contentToParse, apiKey)
         } catch (error: Exception) {
             error.printStackTrace()
             return@withContext ParseResult.Error(
@@ -127,6 +139,53 @@ object GeminiParser {
                 "Failed to parse recipe: ${error.message ?: "Unknown error"}. Please make sure the URL is correct and contains a recipe."
             )
         }
+    }
+
+    fun extractYouTubeDescription(html: String): String {
+        // Try shortDescription first
+        val marker = "\"shortDescription\":\""
+        var index = html.indexOf(marker)
+        if (index != -1) {
+            val start = index + marker.length
+            return parseEscapedJsonString(html, start)
+        }
+        
+        // Try description simpleText fallback
+        val simpleTextMarker = "\"description\":{\"simpleText\":\""
+        index = html.indexOf(simpleTextMarker)
+        if (index != -1) {
+            val start = index + simpleTextMarker.length
+            return parseEscapedJsonString(html, start)
+        }
+        
+        return ""
+    }
+
+    fun parseEscapedJsonString(html: String, start: Int): String {
+        val sb = java.lang.StringBuilder()
+        var i = start
+        while (i < html.length) {
+            val c = html[i]
+            if (c == '"') {
+                // Check if it's escaped
+                if (i > start && html[i - 1] == '\\') {
+                    if (sb.isNotEmpty() && sb.last() == '\\') {
+                        sb.deleteCharAt(sb.length - 1)
+                    }
+                    sb.append(c)
+                } else {
+                    break
+                }
+            } else {
+                sb.append(c)
+            }
+            i++
+        }
+        return sb.toString()
+            .replace("\\n", "\n")
+            .replace("\\t", "\t")
+            .replace("\\\"", "\"")
+            .replace("\\\\", "\\")
     }
 
     private fun cleanHtml(html: String): String {

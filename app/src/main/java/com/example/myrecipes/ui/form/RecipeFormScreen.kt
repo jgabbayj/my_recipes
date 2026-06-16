@@ -19,6 +19,8 @@ import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -52,7 +54,7 @@ fun RecipeFormScreen(
     val apiKey = remember { settingsStore.getApiKey() }
 
     val isEditing = recipeId != null
-    var activeMode by remember { mutableStateOf("manual") } // "manual" or "parse"
+    var activeMode by remember { mutableStateOf(if (isEditing) "manual" else "parse") } // "manual" or "parse"
 
     // Form States
     var title by remember { mutableStateOf("") }
@@ -71,6 +73,8 @@ fun RecipeFormScreen(
     
     val ingredients = remember { mutableStateListOf("") }
     val steps = remember { mutableStateListOf("") }
+    var newlyAddedIngredientIndex by remember { mutableStateOf<Int?>(null) }
+    var newlyAddedStepIndex by remember { mutableStateOf<Int?>(null) }
 
     // Parser States
     var url by remember { mutableStateOf("") }
@@ -165,17 +169,17 @@ fun RecipeFormScreen(
                         .background(MaterialTheme.colorScheme.surface)
                 ) {
                     ModeTabButton(
-                        text = "Manual Entry",
-                        icon = "➕",
-                        isSelected = activeMode == "manual",
-                        onClick = { activeMode = "manual" },
-                        modifier = Modifier.weight(1f)
-                    )
-                    ModeTabButton(
                         text = "Parse from Web / URL",
                         icon = "✨",
                         isSelected = activeMode == "parse",
                         onClick = { activeMode = "parse" },
+                        modifier = Modifier.weight(1f)
+                    )
+                    ModeTabButton(
+                        text = "Manual Entry",
+                        icon = "➕",
+                        isSelected = activeMode == "manual",
+                        onClick = { activeMode = "manual" },
                         modifier = Modifier.weight(1f)
                     )
                 }
@@ -539,7 +543,10 @@ fun RecipeFormScreen(
                             ) {
                                 Text("Ingredients", fontWeight = FontWeight.Bold, color = PrimaryColor, fontSize = 15.sp)
                                 TextButton(
-                                    onClick = { ingredients.add("") },
+                                    onClick = {
+                                        ingredients.add("")
+                                        newlyAddedIngredientIndex = ingredients.size - 1
+                                    },
                                     colors = ButtonDefaults.textButtonColors(contentColor = PrimaryColor)
                                 ) {
                                     Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
@@ -550,6 +557,7 @@ fun RecipeFormScreen(
 
                             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                                 ingredients.forEachIndexed { index, ing ->
+                                    val focusRequester = remember { FocusRequester() }
                                     Row(
                                         verticalAlignment = Alignment.CenterVertically,
                                         horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -564,8 +572,17 @@ fun RecipeFormScreen(
                                                 focusedBorderColor = PrimaryColor,
                                                 unfocusedBorderColor = MaterialTheme.colorScheme.outline
                                             ),
-                                            modifier = Modifier.weight(1f)
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .focusRequester(focusRequester)
                                         )
+
+                                        LaunchedEffect(newlyAddedIngredientIndex) {
+                                            if (newlyAddedIngredientIndex == index) {
+                                                focusRequester.requestFocus()
+                                                newlyAddedIngredientIndex = null
+                                            }
+                                        }
 
                                         IconButton(
                                             onClick = {
@@ -601,7 +618,10 @@ fun RecipeFormScreen(
                             ) {
                                 Text("Cooking Instructions", fontWeight = FontWeight.Bold, color = PrimaryColor, fontSize = 15.sp)
                                 TextButton(
-                                    onClick = { steps.add("") },
+                                    onClick = {
+                                        steps.add("")
+                                        newlyAddedStepIndex = steps.size - 1
+                                    },
                                     colors = ButtonDefaults.textButtonColors(contentColor = PrimaryColor)
                                 ) {
                                     Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
@@ -612,6 +632,7 @@ fun RecipeFormScreen(
 
                             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                                 steps.forEachIndexed { index, step ->
+                                    val focusRequester = remember { FocusRequester() }
                                     Row(
                                         verticalAlignment = Alignment.Top,
                                         horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -634,8 +655,17 @@ fun RecipeFormScreen(
                                                 focusedBorderColor = PrimaryColor,
                                                 unfocusedBorderColor = MaterialTheme.colorScheme.outline
                                             ),
-                                            modifier = Modifier.weight(1f)
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .focusRequester(focusRequester)
                                         )
+
+                                        LaunchedEffect(newlyAddedStepIndex) {
+                                            if (newlyAddedStepIndex == index) {
+                                                focusRequester.requestFocus()
+                                                newlyAddedStepIndex = null
+                                            }
+                                        }
 
                                         IconButton(
                                             onClick = {

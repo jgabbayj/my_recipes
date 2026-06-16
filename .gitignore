@@ -23,3 +23,11 @@ dist-ssr
 *.sln
 *.sw?
 temp_firefox_profile/
+
+# Gradle & Android Build files
+.gradle/
+.kotlin/
+build/
+app/build/
+*.apk
+screencap.png

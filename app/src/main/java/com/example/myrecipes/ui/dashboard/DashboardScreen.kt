@@ -388,12 +388,12 @@ fun RecipeGridCard(recipe: Recipe, isDark: Boolean, onClick: () -> Unit) {
                 .padding(10.dp)
                 .align(Alignment.TopEnd)
                 .clip(CircleShape)
-                .background(Color.Black.copy(alpha = 0.55f))
+                .background(difficultyColor)
                 .padding(horizontal = 8.dp, vertical = 3.dp)
         ) {
             Text(
                 text = recipe.difficulty,
-                color = difficultyColor,
+                color = Color.White,
                 fontSize = 10.sp,
                 fontWeight = FontWeight.Bold
             )
@@ -600,6 +600,7 @@ fun SettingsDialog(
                                     .border(1.dp, DangerColor.copy(alpha = 0.4f), RoundedCornerShape(10.dp))
                                     .clickable {
                                         coroutineScope.launch {
+                                            RecipeStore(context).clearCache()
                                             authManager.signOut()
                                             onDismiss()
                                         }
