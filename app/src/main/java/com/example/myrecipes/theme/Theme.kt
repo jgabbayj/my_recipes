@@ -59,3 +59,8 @@ fun MyRecipesTheme(
         content = content
     )
 }
+
+@Composable
+fun isAppInDarkTheme(): Boolean {
+    return MaterialTheme.colorScheme.background == DarkBg
+}

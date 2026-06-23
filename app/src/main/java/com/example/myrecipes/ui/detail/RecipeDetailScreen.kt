@@ -18,6 +18,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -33,9 +34,14 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.myrecipes.data.Recipe
 import com.example.myrecipes.data.RecipeStore
+import com.example.myrecipes.data.IngredientConverter
 import com.example.myrecipes.theme.*
 import com.example.myrecipes.ui.dashboard.NetworkImage
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.tasks.await
+import com.google.firebase.Firebase
+import com.google.firebase.auth.auth
+import com.google.firebase.firestore.firestore
 
 @Composable
 fun RecipeDetailScreen(
@@ -49,14 +55,27 @@ fun RecipeDetailScreen(
     val context = LocalContext.current
     val recipeStore = remember { RecipeStore(context) }
     val coroutineScope = rememberCoroutineScope()
-    val isDark = isSystemInDarkTheme()
+    val isDark = isAppInDarkTheme()
 
     var recipe by remember { mutableStateOf<Recipe?>(null) }
     var showDeleteConfirm by remember { mutableStateOf(false) }
     var activeTab by remember { mutableStateOf("ingredients") }
+    var creatorUsername by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(recipeId) {
         recipe = recipeStore.getById(recipeId)
+    }
+
+    LaunchedEffect(recipe) {
+        val r = recipe
+        if (r != null && r.userId.isNotEmpty()) {
+            try {
+                val doc = Firebase.firestore.collection("users").document(r.userId).get().await()
+                creatorUsername = doc.getString("username")
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
     }
 
     val currentRecipe = recipe ?: return
@@ -98,7 +117,15 @@ fun RecipeDetailScreen(
                         )
                 )
 
-                // Top bar: back + edit + delete
+                val currentUid = Firebase.auth.currentUser?.uid ?: ""
+                val isCreator = currentRecipe.userId == currentUid || currentRecipe.userId.isEmpty()
+                var isSaved by remember { mutableStateOf(false) }
+
+                LaunchedEffect(currentRecipe.id) {
+                    isSaved = recipeStore.isSaved(currentRecipe.id)
+                }
+
+                // Top bar: back + edit + delete OR save
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -115,25 +142,48 @@ fun RecipeDetailScreen(
                             modifier = Modifier.size(20.dp)
                         )
                     }
-                    // Edit + Delete
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        HeroButton(onClick = { onEditRecipe(currentRecipe.id) }) {
-                            Icon(
-                                Icons.Default.Edit,
-                                contentDescription = "Edit",
-                                tint = Color.White,
-                                modifier = Modifier.size(18.dp)
-                            )
+                    
+                    if (isCreator) {
+                        // Edit + Delete
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            HeroButton(onClick = { onEditRecipe(currentRecipe.id) }) {
+                                Icon(
+                                    Icons.Default.Edit,
+                                    contentDescription = "Edit",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                            HeroButton(
+                                onClick = { showDeleteConfirm = true },
+                                bgColor = Color.Red.copy(alpha = 0.85f)
+                            ) {
+                                Icon(
+                                    Icons.Default.Delete,
+                                    contentDescription = "Delete",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
                         }
+                    } else {
+                        // Save / Bookmark button
                         HeroButton(
-                            onClick = { showDeleteConfirm = true },
-                            bgColor = Color.Red.copy(alpha = 0.85f)
+                            onClick = {
+                                coroutineScope.launch {
+                                    if (isSaved) {
+                                        recipeStore.unsaveRecipe(currentRecipe.id)
+                                        isSaved = false
+                                    } else {
+                                        recipeStore.saveRecipe(currentRecipe.id)
+                                        isSaved = true
+                                    }
+                                }
+                            }
                         ) {
-                            Icon(
-                                Icons.Default.Delete,
-                                contentDescription = "Delete",
-                                tint = Color.White,
-                                modifier = Modifier.size(18.dp)
+                            Text(
+                                text = if (isSaved) "❤️" else "🤍",
+                                fontSize = 16.sp
                             )
                         }
                     }
@@ -145,19 +195,55 @@ fun RecipeDetailScreen(
                         .align(Alignment.BottomStart)
                         .padding(horizontal = 20.dp, vertical = 20.dp)
                 ) {
-                    // Category pill
-                    Box(
-                        modifier = Modifier
-                            .clip(CircleShape)
-                            .background(PrimaryColor)
-                            .padding(horizontal = 12.dp, vertical = 4.dp)
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(
-                            text = currentRecipe.category,
-                            color = Color.White,
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold
-                        )
+                        // Category pill
+                        Box(
+                            modifier = Modifier
+                                .clip(CircleShape)
+                                .background(PrimaryColor)
+                                .padding(horizontal = 12.dp, vertical = 4.dp)
+                        ) {
+                            Text(
+                                text = currentRecipe.category,
+                                color = Color.White,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                        
+                        // Origin badge
+                        Box(
+                            modifier = Modifier
+                                .clip(CircleShape)
+                                .background(if (isCreator) SuccessColor else SecondaryColor)
+                                .padding(horizontal = 12.dp, vertical = 4.dp)
+                        ) {
+                            Text(
+                                text = if (isCreator) "My Recipe" else "Discovered",
+                                color = Color.White,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+
+                        // Added by badge
+                        Box(
+                            modifier = Modifier
+                                .clip(CircleShape)
+                                .background(Color.Black.copy(alpha = 0.6f))
+                                .border(1.dp, Color.White.copy(alpha = 0.3f), CircleShape)
+                                .padding(horizontal = 12.dp, vertical = 4.dp)
+                        ) {
+                            Text(
+                                text = "By: ${creatorUsername ?: "Anonymous"}",
+                                color = Color.White,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
                     }
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
@@ -227,8 +313,48 @@ fun RecipeDetailScreen(
                 Spacer(modifier = Modifier.height(4.dp))
             }
 
-            // ── Description ─────────────────────────────────────────────
-            if (currentRecipe.description.isNotEmpty()) {
+            // ── Description / Creator ───────────────────────────────────
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp, vertical = 8.dp)
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(if (isDark) DarkCardBg else Color(0xFFFFF4EE))
+                    .border(1.dp, borderColor, RoundedCornerShape(16.dp))
+                    .padding(16.dp)
+            ) {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalAlignment = Alignment.Top
+                ) {
+                    Text("💬", fontSize = 18.sp)
+                    Column(
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        if (currentRecipe.description.isNotEmpty()) {
+                            Text(
+                                text = currentRecipe.description,
+                                fontSize = 14.sp,
+                                color = if (isDark) DarkTextMuted else LightTextMuted,
+                                fontStyle = FontStyle.Italic,
+                                lineHeight = 22.sp
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                        }
+                        Text(
+                            text = "Added by: ${creatorUsername ?: "Anonymous"}",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = PrimaryColor
+                        )
+                    }
+                }
+            }
+
+            // ── Link ────────────────────────────────────────────────────
+            val recipeLink = currentRecipe.link
+            if (!recipeLink.isNullOrEmpty()) {
+                val uriHandler = androidx.compose.ui.platform.LocalUriHandler.current
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -236,16 +362,42 @@ fun RecipeDetailScreen(
                         .clip(RoundedCornerShape(16.dp))
                         .background(if (isDark) DarkCardBg else Color(0xFFFFF4EE))
                         .border(1.dp, borderColor, RoundedCornerShape(16.dp))
+                        .clickable {
+                            try {
+                                uriHandler.openUri(recipeLink)
+                            } catch (e: Exception) {
+                                e.printStackTrace()
+                            }
+                        }
                         .padding(16.dp)
                 ) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Text("💬", fontSize = 18.sp)
-                        Text(
-                            text = currentRecipe.description,
-                            fontSize = 14.sp,
-                            color = if (isDark) DarkTextMuted else LightTextMuted,
-                            fontStyle = FontStyle.Italic,
-                            lineHeight = 22.sp
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("🔗", fontSize = 18.sp)
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Recipe Link",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = if (isDark) DarkTextMuted else LightTextMuted
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = recipeLink,
+                                fontSize = 14.sp,
+                                color = PrimaryColor,
+                                textDecoration = androidx.compose.ui.text.style.TextDecoration.Underline,
+                                maxLines = 1,
+                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                            )
+                        }
+                        Icon(
+                            imageVector = Icons.Default.Share,
+                            contentDescription = "Open Link",
+                            tint = PrimaryColor,
+                            modifier = Modifier.size(20.dp)
                         )
                     }
                 }
@@ -282,6 +434,92 @@ fun RecipeDetailScreen(
                     }
                 }
             }
+
+            // ── Interactive Rating Section ───────────────────────────────
+            val currentUid2 = Firebase.auth.currentUser?.uid ?: ""
+            var userRating by remember(currentRecipe.id) {
+                mutableStateOf(currentRecipe.ratings[currentUid2] ?: 0)
+            }
+            LaunchedEffect(currentRecipe.ratings) {
+                userRating = currentRecipe.ratings[currentUid2] ?: 0
+            }
+
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp, vertical = 12.dp)
+                    .clip(RoundedCornerShape(20.dp))
+                    .background(cardBg)
+                    .border(1.dp, borderColor, RoundedCornerShape(20.dp))
+                    .padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        "Community Rating",
+                        fontWeight = FontWeight.ExtraBold,
+                        fontSize = 15.sp,
+                        color = if (isDark) DarkTextMain else LightTextMain
+                    )
+                    if (currentRecipe.numRatings > 0) {
+                        Text(
+                            text = "★ ${String.format(java.util.Locale.US, "%.1f", currentRecipe.averageRating)} (${currentRecipe.numRatings} ${if (currentRecipe.numRatings == 1) "rating" else "ratings"})",
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = PrimaryColor
+                        )
+                    } else {
+                        Text(
+                            text = "No ratings yet",
+                            fontSize = 12.sp,
+                            color = if (isDark) DarkTextMuted else LightTextMuted
+                        )
+                    }
+                }
+
+                HorizontalDivider(color = borderColor)
+
+                Text(
+                    text = if (userRating > 0) "Your Rating: $userRating ${if (userRating == 1) "Star" else "Stars"}" else "Tap to rate this recipe!",
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = if (isDark) DarkTextMuted else LightTextMuted
+                )
+
+                // 5 Stars Row
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    for (star in 1..5) {
+                        val isFilled = star <= userRating
+                        Text(
+                            text = if (isFilled) "★" else "☆",
+                            fontSize = 32.sp,
+                            color = if (isFilled) PrimaryColor else (if (isDark) DarkTextMuted else LightTextMuted),
+                            modifier = Modifier
+                                .clickable {
+                                    userRating = star
+                                    coroutineScope.launch {
+                                        recipeStore.rateRecipe(currentRecipe.id, star)
+                                        // Refresh current recipe details to update stats
+                                        val updated = recipeStore.getById(currentRecipe.id)
+                                        if (updated != null) {
+                                            recipe = updated
+                                        }
+                                    }
+                                }
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(4.dp))
 
             // ── Ingredients / Steps Tabs ─────────────────────────────────
             Column(
@@ -320,9 +558,64 @@ fun RecipeDetailScreen(
                 Spacer(modifier = Modifier.height(16.dp))
 
                 if (activeTab == "ingredients") {
+                    val isRecipeEnglish = !currentRecipe.title.any { it in '\u0590'..'\u05FF' }
+                    var isImperial by remember { mutableStateOf(false) }
+                    
+                    if (isRecipeEnglish) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(bottom = 12.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "Unit System",
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = if (isDark) DarkTextMuted else LightTextMuted
+                            )
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "Metric",
+                                    fontSize = 12.sp,
+                                    fontWeight = if (!isImperial) FontWeight.Bold else FontWeight.Normal,
+                                    color = if (!isImperial) PrimaryColor else if (isDark) DarkTextMuted else LightTextMuted,
+                                    modifier = Modifier.clickable { isImperial = false }
+                                )
+                                Switch(
+                                    checked = isImperial,
+                                    onCheckedChange = { isImperial = it },
+                                    colors = SwitchDefaults.colors(
+                                        checkedThumbColor = Color.White,
+                                        checkedTrackColor = PrimaryColor,
+                                        uncheckedThumbColor = if (isDark) DarkTextMuted else LightTextMuted,
+                                        uncheckedTrackColor = (if (isDark) DarkBorder else LightBorder).copy(alpha = 0.5f)
+                                    )
+                                )
+                                Text(
+                                    text = "Imperial",
+                                    fontSize = 12.sp,
+                                    fontWeight = if (isImperial) FontWeight.Bold else FontWeight.Normal,
+                                    color = if (isImperial) PrimaryColor else if (isDark) DarkTextMuted else LightTextMuted,
+                                    modifier = Modifier.clickable { isImperial = true }
+                                )
+                            }
+                        }
+                    }
+
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         currentRecipe.ingredients.forEach { ingredient ->
-                            IngredientRow(text = ingredient, isDark = isDark, borderColor = borderColor)
+                            val convertedText = if (isRecipeEnglish) {
+                                val system = if (isImperial) IngredientConverter.UnitSystem.IMPERIAL else IngredientConverter.UnitSystem.METRIC
+                                IngredientConverter.convertIngredient(ingredient, system)
+                            } else {
+                                ingredient
+                            }
+                            IngredientRow(text = convertedText, isDark = isDark, borderColor = borderColor)
                         }
                     }
                 } else {
@@ -584,7 +877,7 @@ fun StepRow(index: Int, text: String, isDark: Boolean, borderColor: Color) {
 
 @Composable
 fun NutritionItem(emoji: String, value: String, label: String, color: Color) {
-    val isDark = isSystemInDarkTheme()
+    val isDark = isAppInDarkTheme()
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(6.dp)
@@ -612,3 +905,5 @@ fun NutritionItem(emoji: String, value: String, label: String, color: Color) {
         )
     }
 }
+
+

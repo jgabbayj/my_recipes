@@ -5,6 +5,9 @@ import com.google.firebase.Firebase
 import com.google.firebase.auth.auth
 import com.google.firebase.firestore.firestore
 import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -56,21 +59,38 @@ class RecipeStore(private val context: Context) {
         }
         
         try {
-            val snapshot = db.collection("users")
-                .document(currentUid)
-                .collection("recipes")
-                .get()
-                .await()
+            val userDoc = db.collection("users").document(currentUid).get().await()
+            val savedIds = (userDoc.get("savedRecipes") as? List<*>)?.mapNotNull { it as? String } ?: emptyList()
+            
+            if (savedIds.isEmpty()) {
+                saveRecipesToCache(emptyList())
+                prefs.edit().putBoolean("has_synced", true).apply()
+                return emptyList()
+            }
             
             val list = mutableListOf<Recipe>()
-            for (doc in snapshot.documents) {
-                list.add(docToRecipe(doc.id, doc.data ?: emptyMap()))
+            coroutineScope {
+                val deferreds = savedIds.map { recipeId ->
+                    async {
+                        try {
+                            val doc = db.collection("recipes").document(recipeId).get().await()
+                            if (doc.exists()) {
+                                docToRecipe(doc.id, doc.data ?: emptyMap())
+                            } else {
+                                null
+                            }
+                        } catch (e: Exception) {
+                            e.printStackTrace()
+                            null
+                        }
+                    }
+                }
+                list.addAll(deferreds.awaitAll().filterNotNull())
             }
             
             val sortedList = list.sortedByDescending { it.createdAt }
             saveRecipesToCache(sortedList)
             
-            // Mark as initialized and synced
             prefs.edit()
                 .putBoolean("is_initialized", true)
                 .putBoolean("has_synced", true)
@@ -79,23 +99,34 @@ class RecipeStore(private val context: Context) {
             return sortedList
         } catch (e: Exception) {
             e.printStackTrace()
-            // If Firestore fetch fails, fallback to cache if available
             return getRecipesFromCache()
         }
     }
 
+    suspend fun getGlobalRecipes(): List<Recipe> {
+        try {
+            val snapshot = db.collection("recipes")
+                .get()
+                .await()
+            val list = mutableListOf<Recipe>()
+            for (doc in snapshot.documents) {
+                list.add(docToRecipe(doc.id, doc.data ?: emptyMap()))
+            }
+            return list.sortedByDescending { it.createdAt }
+        } catch (e: Exception) {
+            e.printStackTrace()
+            return emptyList()
+        }
+    }
+
     suspend fun getById(id: String): Recipe? {
-        // First check local cache
         val cachedRecipe = getRecipesFromCache().find { it.id == id }
         if (cachedRecipe != null) {
             return cachedRecipe
         }
 
-        val currentUid = auth.currentUser?.uid ?: return null
         try {
-            val doc = db.collection("users")
-                .document(currentUid)
-                .collection("recipes")
+            val doc = db.collection("recipes")
                 .document(id)
                 .get()
                 .await()
@@ -115,53 +146,63 @@ class RecipeStore(private val context: Context) {
         val newId = if (recipe.id.isEmpty() || recipe.id == "null") "recipe-$timestamp" else recipe.id
         val newRecipe = recipe.copy(
             id = newId,
+            userId = currentUid,
             createdAt = if (recipe.createdAt == 0L || recipe.id.isEmpty() || recipe.id == "null") timestamp else recipe.createdAt
         )
         
-        // 1. Update local cache immediately
         val currentCached = getRecipesFromCache().toMutableList()
         currentCached.removeAll { it.id == newId }
         currentCached.add(0, newRecipe)
         saveRecipesToCache(currentCached.sortedByDescending { it.createdAt })
         
-        // 2. Save to Firestore
         val map = recipeToMap(newRecipe, currentUid)
         try {
-            db.collection("users")
-                .document(currentUid)
-                .collection("recipes")
+            db.collection("recipes")
                 .document(newId)
                 .set(map)
                 .await()
+            
+            db.collection("users")
+                .document(currentUid)
+                .update("savedRecipes", com.google.firebase.firestore.FieldValue.arrayUnion(newId))
+                .await()
         } catch (e: Exception) {
             e.printStackTrace()
+            try {
+                db.collection("users")
+                    .document(currentUid)
+                    .set(
+                        mapOf("savedRecipes" to listOf(newId)),
+                        com.google.firebase.firestore.SetOptions.merge()
+                    )
+                    .await()
+            } catch (e2: Exception) {
+                e2.printStackTrace()
+            }
         }
         return newRecipe
     }
 
     suspend fun update(id: String, updatedRecipe: Recipe): Recipe? {
         val currentUid = auth.currentUser?.uid ?: return null
+        val finalRecipe = updatedRecipe.copy(userId = updatedRecipe.userId.ifEmpty { currentUid })
         
-        // 1. Update local cache immediately
         val currentCached = getRecipesFromCache().toMutableList()
         val index = currentCached.indexOfFirst { it.id == id }
         if (index != -1) {
-            currentCached[index] = updatedRecipe
+            currentCached[index] = finalRecipe
         } else {
-            currentCached.add(updatedRecipe)
+            currentCached.add(finalRecipe)
         }
         saveRecipesToCache(currentCached.sortedByDescending { it.createdAt })
 
-        // 2. Save to Firestore
-        val map = recipeToMap(updatedRecipe, currentUid)
+        val map = recipeToMap(finalRecipe, finalRecipe.userId)
         try {
-            db.collection("users")
-                .document(currentUid)
-                .collection("recipes")
+            db.collection("recipes")
                 .document(id)
                 .set(map)
                 .await()
-            return updatedRecipe
+            return finalRecipe
         } catch (e: Exception) {
             e.printStackTrace()
         }
@@ -171,23 +212,142 @@ class RecipeStore(private val context: Context) {
     suspend fun delete(id: String): List<Recipe> {
         val currentUid = auth.currentUser?.uid ?: return emptyList()
         
-        // 1. Update local cache immediately
         val currentCached = getRecipesFromCache().toMutableList()
         currentCached.removeAll { it.id == id }
         saveRecipesToCache(currentCached.sortedByDescending { it.createdAt })
 
-        // 2. Delete from Firestore
         try {
             db.collection("users")
                 .document(currentUid)
-                .collection("recipes")
-                .document(id)
-                .delete()
+                .update("savedRecipes", com.google.firebase.firestore.FieldValue.arrayRemove(id))
                 .await()
+            
+            val recipe = getById(id)
+            if (recipe != null && recipe.userId == currentUid) {
+                db.collection("recipes")
+                    .document(id)
+                    .delete()
+                    .await()
+            }
         } catch (e: Exception) {
             e.printStackTrace()
         }
         return currentCached
+    }
+
+    suspend fun isSaved(recipeId: String): Boolean {
+        val currentUid = auth.currentUser?.uid ?: return false
+        return try {
+            val userDoc = db.collection("users").document(currentUid).get().await()
+            val savedIds = (userDoc.get("savedRecipes") as? List<*>)?.mapNotNull { it as? String } ?: emptyList()
+            savedIds.contains(recipeId)
+        } catch (e: Exception) {
+            e.printStackTrace()
+            false
+        }
+    }
+
+    suspend fun saveRecipe(recipeId: String) {
+        val currentUid = auth.currentUser?.uid ?: return
+        try {
+            db.collection("users")
+                .document(currentUid)
+                .update("savedRecipes", com.google.firebase.firestore.FieldValue.arrayUnion(recipeId))
+                .await()
+            
+            val recipe = getById(recipeId)
+            if (recipe != null) {
+                val currentCached = getRecipesFromCache().toMutableList()
+                currentCached.removeAll { it.id == recipeId }
+                currentCached.add(0, recipe)
+                saveRecipesToCache(currentCached.sortedByDescending { it.createdAt })
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+            try {
+                db.collection("users")
+                    .document(currentUid)
+                    .set(
+                        mapOf("savedRecipes" to listOf(recipeId)),
+                        com.google.firebase.firestore.SetOptions.merge()
+                    )
+                    .await()
+                val recipe = getById(recipeId)
+                if (recipe != null) {
+                    val currentCached = getRecipesFromCache().toMutableList()
+                    currentCached.removeAll { it.id == recipeId }
+                    currentCached.add(0, recipe)
+                    saveRecipesToCache(currentCached.sortedByDescending { it.createdAt })
+                }
+            } catch (e2: Exception) {
+                e2.printStackTrace()
+            }
+        }
+    }
+
+    suspend fun unsaveRecipe(recipeId: String) {
+        val currentUid = auth.currentUser?.uid ?: return
+        try {
+            db.collection("users")
+                .document(currentUid)
+                .update("savedRecipes", com.google.firebase.firestore.FieldValue.arrayRemove(recipeId))
+                .await()
+            
+            val currentCached = getRecipesFromCache().toMutableList()
+            currentCached.removeAll { it.id == recipeId }
+            saveRecipesToCache(currentCached.sortedByDescending { it.createdAt })
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    suspend fun rateRecipe(recipeId: String, rating: Int) {
+        val currentUid = auth.currentUser?.uid ?: return
+        if (rating < 1 || rating > 5) return
+
+        try {
+            db.collection("users")
+                .document(currentUid)
+                .set(
+                    mapOf("ratings" to mapOf(recipeId to rating)),
+                    com.google.firebase.firestore.SetOptions.merge()
+                )
+                .await()
+
+            val docRef = db.collection("recipes").document(recipeId)
+            val doc = docRef.get().await()
+            if (doc.exists()) {
+                val data = doc.data ?: emptyMap()
+                @Suppress("UNCHECKED_CAST")
+                val ratings = (data["ratings"] as? Map<String, Long>)?.mapValues { it.value.toInt() }?.toMutableMap() ?: mutableMapOf()
+                
+                ratings[currentUid] = rating
+                val numRatings = ratings.size
+                val averageRating = ratings.values.sum().toDouble() / numRatings
+
+                docRef.update(
+                    mapOf(
+                        "ratings" to ratings,
+                        "averageRating" to averageRating,
+                        "numRatings" to numRatings
+                    )
+                ).await()
+
+                val currentCached = getRecipesFromCache().toMutableList()
+                val index = currentCached.indexOfFirst { it.id == recipeId }
+                if (index != -1) {
+                    val updatedRecipe = currentCached[index].copy(
+                        ratings = ratings,
+                        averageRating = averageRating,
+                        numRatings = numRatings
+                    )
+                    currentCached[index] = updatedRecipe
+                    saveRecipesToCache(currentCached.sortedByDescending { it.createdAt })
+                }
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
     }
 
     private fun docToRecipe(id: String, data: Map<String, Any>): Recipe {
@@ -206,6 +366,12 @@ class RecipeStore(private val context: Context) {
             }
         }
 
+        val userId = data["userId"] as? String ?: ""
+        @Suppress("UNCHECKED_CAST")
+        val ratings = (data["ratings"] as? Map<String, Long>)?.mapValues { it.value.toInt() } ?: emptyMap()
+        val averageRating = (data["averageRating"] as? Number)?.toDouble() ?: 0.0
+        val numRatings = (data["numRatings"] as? Number)?.toInt() ?: 0
+
         return Recipe(
             id = id,
             title = (data["title"] as? String) ?: "",
@@ -223,13 +389,17 @@ class RecipeStore(private val context: Context) {
             protein = (data["protein"] as? Long)?.toInt(),
             fat = (data["fat"] as? Long)?.toInt(),
             tags = tags,
-            createdAt = createdAt
+            createdAt = createdAt,
+            userId = userId,
+            ratings = ratings,
+            averageRating = averageRating,
+            numRatings = numRatings
         )
     }
 
     private fun recipeToMap(recipe: Recipe, userId: String): Map<String, Any> {
         val map = mutableMapOf<String, Any>(
-            "userId" to userId,
+            "userId" to userId.ifEmpty { recipe.userId },
             "title" to recipe.title,
             "description" to recipe.description,
             "image" to recipe.image,
@@ -241,7 +411,10 @@ class RecipeStore(private val context: Context) {
             "ingredients" to recipe.ingredients,
             "steps" to recipe.steps,
             "tags" to recipe.tags,
-            "createdAt" to recipe.createdAt
+            "createdAt" to recipe.createdAt,
+            "ratings" to recipe.ratings,
+            "averageRating" to recipe.averageRating,
+            "numRatings" to recipe.numRatings
         )
         recipe.calories?.let { map["calories"] = it }
         recipe.carbs?.let { map["carbs"] = it }
@@ -260,5 +433,21 @@ class SettingsStore(context: Context) {
 
     fun saveApiKey(key: String) {
         prefs.edit().putString("gemini_api_key", key).apply()
+    }
+
+    fun getTheme(): String {
+        return prefs.getString("theme", "system") ?: "system"
+    }
+
+    fun saveTheme(theme: String) {
+        prefs.edit().putString("theme", theme).apply()
+    }
+
+    fun registerListener(listener: android.content.SharedPreferences.OnSharedPreferenceChangeListener) {
+        prefs.registerOnSharedPreferenceChangeListener(listener)
+    }
+
+    fun unregisterListener(listener: android.content.SharedPreferences.OnSharedPreferenceChangeListener) {
+        prefs.unregisterOnSharedPreferenceChangeListener(listener)
     }
 }

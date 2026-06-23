@@ -23,6 +23,8 @@ dist-ssr
 *.sln
 *.sw?
 temp_firefox_profile/
+local.properties
+app/google-services.json
 
 # Gradle & Android Build files
 .gradle/
@@ -31,3 +33,4 @@ build/
 app/build/
 *.apk
 screencap.png
+screenshot.png

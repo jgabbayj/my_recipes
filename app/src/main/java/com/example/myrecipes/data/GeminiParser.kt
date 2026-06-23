@@ -49,7 +49,8 @@ object GeminiParser {
         carbs = 42,
         protein = 35,
         fat = 38,
-        tags = listOf("Italian", "Pasta", "Beef", "Cheese")
+        tags = listOf("Italian", "Pasta", "Beef", "Cheese"),
+        ingredientsEnglish = listOf("lasagna noodles", "ground beef", "italian sausage", "onion", "garlic", "crushed tomatoes", "tomato paste", "dried oregano", "dried basil", "ricotta cheese", "egg", "parmesan cheese", "mozzarella cheese")
     )
 
     private val MOCK_TACOS = Recipe(
@@ -83,7 +84,8 @@ object GeminiParser {
         carbs = 28,
         protein = 24,
         fat = 18,
-        tags = listOf("Mexican", "Tacos", "Beef", "Spicy", "Quick")
+        tags = listOf("Mexican", "Tacos", "Beef", "Spicy", "Quick"),
+        ingredientsEnglish = listOf("ground beef", "taco seasoning", "water", "corn tortillas", "white onion", "fresh cilantro", "lime", "salsa", "hot sauce")
     )
 
     suspend fun parseFromUrl(url: String, apiKey: String): ParseResult = withContext(Dispatchers.IO) {
@@ -100,11 +102,11 @@ object GeminiParser {
             // Simulate network delay
             kotlinx.coroutines.delay(2000)
             if (mockKey == "lasagna") {
-                return@withContext ParseResult.Success(MOCK_LASAGNA, "Recipe parsed successfully using simulator.")
+                return@withContext ParseResult.Success(MOCK_LASAGNA.copy(link = url), "Recipe parsed successfully using simulator.")
             } else if (mockKey == "tacos") {
-                return@withContext ParseResult.Success(MOCK_TACOS, "Recipe parsed successfully using simulator.")
+                return@withContext ParseResult.Success(MOCK_TACOS.copy(link = url), "Recipe parsed successfully using simulator.")
             }
-            return@withContext ParseResult.Success(MOCK_LASAGNA, "No Gemini API key provided. Loaded demo lasagna recipe.")
+            return@withContext ParseResult.Success(MOCK_LASAGNA.copy(link = url), "No Gemini API key provided. Loaded demo lasagna recipe.")
         }
 
         try {
@@ -131,7 +133,32 @@ object GeminiParser {
                 htmlContent
             }
 
-            return@withContext parseFromText(contentToParse, apiKey)
+            val result = parseFromText(contentToParse, apiKey)
+            if (result is ParseResult.Success) {
+                val defaultPlaceholder = "https://images.unsplash.com/photo-1495521821757-a1efb6729352?auto=format&fit=crop&w=800&q=80"
+                val extractedImage = if (!isYouTube) {
+                    extractImageFromHtml(htmlContent, url)
+                } else {
+                    extractYouTubeThumbnail(url)
+                }
+                
+                val finalImage = if (!extractedImage.isNullOrEmpty()) {
+                    extractedImage
+                } else if (result.recipe.image.isNotEmpty() && result.recipe.image != defaultPlaceholder) {
+                    result.recipe.image
+                } else {
+                    defaultPlaceholder
+                }
+
+                return@withContext ParseResult.Success(
+                    result.recipe.copy(
+                        link = url,
+                        image = finalImage
+                    ),
+                    result.message
+                )
+            }
+            return@withContext result
         } catch (error: Exception) {
             error.printStackTrace()
             return@withContext ParseResult.Error(
@@ -256,6 +283,9 @@ object GeminiParser {
                   "fat": "Estimated grams of fat per serving as an integer. Estimate if not present (number, optional)",
                   "tags": [
                     "List of relevant tags/labels, e.g. 'Gluten-Free', 'Vegetarian', 'Quick', 'Spicy' (array of strings)"
+                  ],
+                  "ingredientsEnglish": [
+                    "Hidden list of the exact same ingredients from 'ingredients' field, translated to English, without quantities or extra comments, just the base ingredient name in English, e.g. ['flour', 'salt', 'olive oil'] (array of strings)"
                   ]
                 }
         
@@ -312,6 +342,14 @@ object GeminiParser {
                     }
                 }
                 
+                val ingredientsEnglishArray = recipeData.optJSONArray("ingredientsEnglish")
+                val ingredientsEnglish = mutableListOf<String>()
+                if (ingredientsEnglishArray != null) {
+                    for (i in 0 until ingredientsEnglishArray.length()) {
+                        ingredientsEnglish.add(ingredientsEnglishArray.getString(i))
+                    }
+                }
+                
                 val sanitizedRecipe = Recipe(
                     id = "recipe-${System.currentTimeMillis()}",
                     title = title,
@@ -328,7 +366,8 @@ object GeminiParser {
                     carbs = carbs,
                     protein = protein,
                     fat = fat,
-                    tags = tags
+                    tags = tags,
+                    ingredientsEnglish = ingredientsEnglish
                 )
 
                 return@withContext ParseResult.Success(sanitizedRecipe, "Recipe parsed successfully using Gemini AI!")
@@ -416,6 +455,179 @@ object GeminiParser {
             clean = clean.removeSuffix("```")
         }
         return clean.trim()
+    }
+
+    private fun findImageInJson(json: Any): String? {
+        when (json) {
+            is JSONObject -> {
+                if (json.has("image")) {
+                    val imgVal = json.get("image")
+                    val url = extractImageUrlFromSchemaValue(imgVal)
+                    if (url != null) return url
+                }
+                if (json.optString("@type") == "ImageObject" && json.has("url")) {
+                    val urlVal = json.optString("url")
+                    if (urlVal.isNotEmpty()) return urlVal
+                }
+                for (key in json.keys()) {
+                    val subVal = json.get(key)
+                    val found = findImageInJson(subVal)
+                    if (found != null) return found
+                }
+            }
+            is JSONArray -> {
+                for (i in 0 until json.length()) {
+                    val subVal = json.get(i)
+                    val found = findImageInJson(subVal)
+                    if (found != null) return found
+                }
+            }
+        }
+        return null
+    }
+
+    private fun extractImageUrlFromSchemaValue(value: Any): String? {
+        when (value) {
+            is String -> {
+                if (value.startsWith("http") || value.startsWith("/") || value.startsWith("./") || value.startsWith("../")) {
+                    return value
+                }
+            }
+            is JSONObject -> {
+                if (value.has("url")) {
+                    val urlVal = value.optString("url")
+                    if (urlVal.isNotEmpty()) return urlVal
+                }
+            }
+            is JSONArray -> {
+                if (value.length() > 0) {
+                    val first = value.get(0)
+                    return extractImageUrlFromSchemaValue(first)
+                }
+            }
+        }
+        return null
+    }
+
+    fun extractImageFromHtml(html: String, urlString: String): String? {
+        try {
+            val baseUri = try { java.net.URI(urlString) } catch (e: Exception) { null }
+
+            fun resolveUrl(url: String): String {
+                val cleanedUrl = url.replace("&amp;", "&")
+                    .replace("&lt;", "<")
+                    .replace("&gt;", ">")
+                    .replace("&quot;", "\"")
+                    .replace("&#39;", "'")
+                    .trim()
+                if (cleanedUrl.startsWith("http")) return cleanedUrl
+                if (baseUri != null) {
+                    try {
+                        return baseUri.resolve(cleanedUrl).toString()
+                    } catch (e: Exception) {
+                        e.printStackTrace()
+                    }
+                }
+                return cleanedUrl
+            }
+
+            // 1. Try to find og:image meta tag
+            val ogImageRegex = Regex("""<meta[^>]+(?:property|name)\s*=\s*["']og:image["'][^>]+content\s*=\s*["']([^"']+)["']""", RegexOption.IGNORE_CASE)
+            val match1 = ogImageRegex.find(html)
+            if (match1 != null) {
+                return resolveUrl(match1.groupValues[1])
+            }
+
+            val ogImageRegex2 = Regex("""<meta[^>]+content\s*=\s*["']([^"']+)["'][^>]+(?:property|name)\s*=\s*["']og:image["']""", RegexOption.IGNORE_CASE)
+            val match2 = ogImageRegex2.find(html)
+            if (match2 != null) {
+                return resolveUrl(match2.groupValues[1])
+            }
+
+            // 2. Try JSON-LD schema image URL
+            val jsonLdRegex = Regex("""<script[^>]+type\s*=\s*["']application/ld\+json["'][^>]*>([\s\S]*?)</script>""", RegexOption.IGNORE_CASE)
+            val jsonLdMatches = jsonLdRegex.findAll(html)
+            for (match in jsonLdMatches) {
+                val jsonText = match.groupValues[1].trim()
+                try {
+                    val token = jsonText.substring(0, 1)
+                    val imgUrl = if (token == "{") {
+                        findImageInJson(JSONObject(jsonText))
+                    } else if (token == "[") {
+                        findImageInJson(JSONArray(jsonText))
+                    } else {
+                        null
+                    }
+                    if (imgUrl != null) {
+                        return resolveUrl(imgUrl)
+                    }
+                } catch (e: Exception) {
+                    // Fallback to simple regex if JSON parsing fails
+                    val schemaImageRegex = Regex("""["']image["']\s*:\s*(?:["']([^"']+)["']|\[\s*["']([^"']+)["']|\{\s*["']@type["']\s*:\s*["']ImageObject["']\s*,\s*["']url["']\s*:\s*["']([^"']+)["'])""", RegexOption.IGNORE_CASE)
+                    val schemaMatch = schemaImageRegex.find(jsonText)
+                    if (schemaMatch != null) {
+                        val url = schemaMatch.groupValues.firstOrNull { it.isNotEmpty() && (it.startsWith("http") || it.startsWith("/") || it.startsWith("./") || it.startsWith("../")) }
+                        if (url != null) return resolveUrl(url)
+                    }
+                }
+            }
+
+            // 3. Try to find twitter:image meta tag
+            val twitterImageRegex = Regex("""<meta[^>]+(?:property|name)\s*=\s*["']twitter:image["'][^>]+content\s*=\s*["']([^"']+)["']""", RegexOption.IGNORE_CASE)
+            val match3 = twitterImageRegex.find(html)
+            if (match3 != null) {
+                return resolveUrl(match3.groupValues[1])
+            }
+
+            // 4. Try standard <img> tags with certain class names/attributes
+            val imgRegex = Regex("""<img[^>]+src\s*=\s*["']([^"']+\.(?:jpg|jpeg|png|webp)[^"']*)["'][^>]*>""", RegexOption.IGNORE_CASE)
+            val imgMatches = imgRegex.findAll(html)
+            for (imgMatch in imgMatches) {
+                val imgSrc = imgMatch.groupValues[1]
+                val fullTag = imgMatch.value
+                if (fullTag.contains("recipe", ignoreCase = true) || 
+                    fullTag.contains("hero", ignoreCase = true) || 
+                    fullTag.contains("cover", ignoreCase = true) || 
+                    fullTag.contains("featured", ignoreCase = true) || 
+                    fullTag.contains("main", ignoreCase = true) ||
+                    fullTag.contains("post-image", ignoreCase = true)
+                ) {
+                    return resolveUrl(imgSrc)
+                }
+            }
+
+            // Fallback to first image tag that is absolute or resolves, and doesn't look like icon/logo
+            for (imgMatch in imgMatches) {
+                val imgSrc = imgMatch.groupValues[1]
+                if (!imgSrc.contains("icon", ignoreCase = true) && !imgSrc.contains("logo", ignoreCase = true) && !imgSrc.contains("avatar", ignoreCase = true) && !imgSrc.contains("pixel", ignoreCase = true)) {
+                    return resolveUrl(imgSrc)
+                }
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+        return null
+    }
+
+    fun extractYouTubeThumbnail(youtubeUrl: String): String? {
+        try {
+            var videoId: String? = null
+            if (youtubeUrl.contains("youtu.be/")) {
+                videoId = youtubeUrl.substringAfter("youtu.be/").substringBefore("?").substringBefore("/")
+            } else if (youtubeUrl.contains("/shorts/")) {
+                videoId = youtubeUrl.substringAfter("/shorts/").substringBefore("?").substringBefore("/")
+            } else if (youtubeUrl.contains("v=")) {
+                videoId = youtubeUrl.substringAfter("v=").substringBefore("&").substringBefore("/")
+            } else if (youtubeUrl.contains("embed/")) {
+                videoId = youtubeUrl.substringAfter("embed/").substringBefore("?").substringBefore("/")
+            }
+            if (!videoId.isNullOrEmpty()) {
+                return "https://img.youtube.com/vi/$videoId/hqdefault.jpg"
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+        return null
     }
 }
 

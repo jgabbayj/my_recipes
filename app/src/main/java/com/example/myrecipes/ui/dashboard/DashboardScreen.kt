@@ -24,6 +24,8 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Public
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -48,6 +50,8 @@ import com.example.myrecipes.data.RecipeStore
 import com.example.myrecipes.data.SettingsStore
 import com.example.myrecipes.data.ImageCache
 import com.example.myrecipes.theme.*
+import com.example.myrecipes.R
+import androidx.compose.ui.res.painterResource
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import com.google.firebase.Firebase
@@ -75,15 +79,24 @@ fun DashboardScreen(
     val context = LocalContext.current
     val recipeStore = remember { RecipeStore(context) }
     val settingsStore = remember { SettingsStore(context) }
-    val isDark = isSystemInDarkTheme()
+    val isDark = isAppInDarkTheme()
+    val currentUid = remember { Firebase.auth.currentUser?.uid ?: "" }
 
     var recipes by remember { mutableStateOf(emptyList<Recipe>()) }
     var searchQuery by remember { mutableStateOf("") }
     var selectedCategory by remember { mutableStateOf("All") }
     var showSettingsDialog by remember { mutableStateOf(false) }
+    var activeTab by remember { mutableStateOf("saved") } // "saved" or "discover"
 
-    LaunchedEffect(showSettingsDialog) {
-        recipes = recipeStore.getAll()
+    LaunchedEffect(activeTab, showSettingsDialog) {
+        recipes = if (activeTab == "saved") {
+            recipeStore.getAll()
+        } else {
+            val global = recipeStore.getGlobalRecipes()
+            val saved = recipeStore.getAll()
+            val savedIds = saved.map { it.id }.toSet()
+            global.filter { it.id !in savedIds }
+        }
         withContext(Dispatchers.IO) {
             ImageCache.preCacheImages(context, recipes.map { it.image })
             ImageCache.deleteUnusedImages(context, recipes.map { it.image })
@@ -95,7 +108,8 @@ fun DashboardScreen(
     val filteredRecipes = recipes.filter { recipe ->
         val matchesSearch = recipe.title.contains(searchQuery, ignoreCase = true) ||
                 recipe.description.contains(searchQuery, ignoreCase = true) ||
-                recipe.ingredients.any { it.contains(searchQuery, ignoreCase = true) }
+                recipe.ingredients.any { it.contains(searchQuery, ignoreCase = true) } ||
+                recipe.ingredientsEnglish.any { it.contains(searchQuery, ignoreCase = true) }
         val matchesCategory = selectedCategory == "All" || recipe.category == selectedCategory
         matchesSearch && matchesCategory
     }
@@ -126,14 +140,31 @@ fun DashboardScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Image(
+                                    painter = painterResource(id = R.mipmap.ic_launcher),
+                                    contentDescription = "App Icon",
+                                    modifier = Modifier
+                                        .size(32.dp)
+                                        .clip(RoundedCornerShape(8.dp))
+                                )
+                                Text(
+                                    text = "Re-c-p",
+                                    fontSize = 30.sp,
+                                    fontWeight = FontWeight.Black,
+                                    color = PrimaryColor
+                                )
+                            }
                             Text(
-                                text = "MyRecipes 🧑‍🍳",
-                                fontSize = 30.sp,
-                                fontWeight = FontWeight.Black,
-                                color = PrimaryColor
-                            )
-                            Text(
-                                text = "${recipes.size} recipe${if (recipes.size != 1) "s" else ""} saved",
+                                text = if (activeTab == "saved") {
+                                    "${recipes.size} recipe${if (recipes.size != 1) "s" else ""} saved"
+                                } else {
+                                    "Discover new recipes"
+                                },
+                                modifier = Modifier.padding(top = 2.dp),
                                 fontSize = 13.sp,
                                 fontWeight = FontWeight.SemiBold,
                                 color = if (isDark) DarkTextMuted else LightTextMuted
@@ -154,6 +185,35 @@ fun DashboardScreen(
                                 contentDescription = "Settings",
                                 tint = PrimaryColor,
                                 modifier = Modifier.size(20.dp)
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(14.dp))
+
+                    // Tab selector (My Book vs Discover)
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(if (isDark) DarkCardBg else Color(0xFFF0EDE8))
+                            .padding(3.dp)
+                    ) {
+                        Row(modifier = Modifier.fillMaxWidth()) {
+                            val tabModifier = Modifier.weight(1f)
+                            DashboardTab(
+                                text = "My Book",
+                                isSelected = activeTab == "saved",
+                                isDark = isDark,
+                                onClick = { activeTab = "saved" },
+                                modifier = tabModifier
+                            )
+                            DashboardTab(
+                                text = "Discover",
+                                isSelected = activeTab == "discover",
+                                isDark = isDark,
+                                onClick = { activeTab = "discover" },
+                                modifier = tabModifier
                             )
                         }
                     }
@@ -219,18 +279,18 @@ fun DashboardScreen(
                 )
             } else {
                 LazyVerticalGrid(
-                    columns = GridCells.Fixed(2),
+                    columns = GridCells.Fixed(1),
                     modifier = Modifier
                         .fillMaxSize()
                         .weight(1f)
-                        .padding(horizontal = 12.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        .padding(horizontal = 16.dp),
+                    verticalArrangement = Arrangement.spacedBy(16.dp),
                     contentPadding = PaddingValues(bottom = 100.dp, top = 4.dp)
                 ) {
                     items(filteredRecipes, key = { it.id }) { recipe ->
-                        RecipeGridCard(
+                        RecipeRowCard(
                             recipe = recipe,
+                            currentUid = currentUid,
                             isDark = isDark,
                             onClick = { onSelectRecipe(recipe.id) }
                         )
@@ -264,6 +324,41 @@ fun DashboardScreen(
         SettingsDialog(
             settingsStore = settingsStore,
             onDismiss = { showSettingsDialog = false }
+        )
+    }
+}
+
+@Composable
+private fun DashboardTab(
+    text: String,
+    isSelected: Boolean,
+    isDark: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val bgColor by animateColorAsState(
+        targetValue = if (isSelected) PrimaryColor else Color.Transparent,
+        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+        label = "dashTabBg"
+    )
+    val textColor by animateColorAsState(
+        targetValue = if (isSelected) Color.White
+        else if (isDark) DarkTextMuted else LightTextMuted,
+        label = "dashTabText"
+    )
+    Box(
+        modifier = modifier
+            .height(38.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .background(bgColor)
+            .clickable { onClick() },
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = text,
+            color = textColor,
+            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.SemiBold,
+            fontSize = 13.sp
         )
     }
 }
@@ -339,107 +434,273 @@ private fun CategoryChip(
 }
 
 @Composable
-fun RecipeGridCard(recipe: Recipe, isDark: Boolean, onClick: () -> Unit) {
+fun RecipeRowCard(recipe: Recipe, currentUid: String, isDark: Boolean, onClick: () -> Unit) {
     val cardBg = if (isDark) DarkCardBg else LightCardBg
     val difficultyColor = when (recipe.difficulty) {
         "Easy" -> SuccessColor
         "Hard" -> DangerColor
         else -> PrimaryColor
     }
+    val isMyRecipe = recipe.userId == currentUid || recipe.userId.isEmpty()
 
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .aspectRatio(0.72f)
-            .clip(RoundedCornerShape(20.dp))
+            .clip(RoundedCornerShape(24.dp))
             .background(cardBg)
-            .border(1.dp, if (isDark) DarkBorder else LightBorder, RoundedCornerShape(20.dp))
+            .border(1.dp, if (isDark) DarkBorder else LightBorder, RoundedCornerShape(24.dp))
             .clickable { onClick() }
     ) {
-        // Food Photo (top ~65%)
-        NetworkImage(
-            url = recipe.image,
-            modifier = Modifier
-                .fillMaxWidth()
-                .fillMaxHeight(0.65f)
-                .align(Alignment.TopCenter)
-        )
-
-        // Gradient overlay on photo bottom
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .fillMaxHeight(0.65f)
-                .align(Alignment.TopCenter)
-                .background(
-                    Brush.verticalGradient(
-                        colors = listOf(
-                            Color.Transparent,
-                            Color.Black.copy(alpha = 0.25f)
-                        ),
-                        startY = 100f
-                    )
-                )
-        )
-
-        // Difficulty badge top-right
-        Box(
-            modifier = Modifier
-                .padding(10.dp)
-                .align(Alignment.TopEnd)
-                .clip(CircleShape)
-                .background(difficultyColor)
-                .padding(horizontal = 8.dp, vertical = 3.dp)
-        ) {
-            Text(
-                text = recipe.difficulty,
-                color = Color.White,
-                fontSize = 10.sp,
-                fontWeight = FontWeight.Bold
-            )
-        }
-
-        // Info panel bottom ~35%
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .fillMaxHeight(0.38f)
-                .align(Alignment.BottomCenter)
-                .background(cardBg)
-                .padding(horizontal = 12.dp, vertical = 10.dp),
-            verticalArrangement = Arrangement.SpaceBetween
-        ) {
-            Text(
-                text = recipe.title,
-                fontSize = 13.sp,
-                fontWeight = FontWeight.ExtraBold,
-                color = if (isDark) DarkTextMain else LightTextMain,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-                lineHeight = 17.sp
-            )
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically
+        Column(modifier = Modifier.fillMaxWidth()) {
+            // Food Photo (with gradient and badges)
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(200.dp)
             ) {
-                Text(
-                    "⏱ ${recipe.prepTime + recipe.cookTime}m",
-                    fontSize = 11.sp,
-                    color = if (isDark) DarkTextMuted else LightTextMuted,
-                    fontWeight = FontWeight.SemiBold
+                NetworkImage(
+                    url = recipe.image,
+                    modifier = Modifier.fillMaxSize()
                 )
+
+                // Gradient overlay
                 Box(
                     modifier = Modifier
-                        .size(3.dp)
+                        .fillMaxSize()
+                        .background(
+                            Brush.verticalGradient(
+                                colors = listOf(
+                                    Color.Black.copy(alpha = 0.25f),
+                                    Color.Transparent,
+                                    Color.Black.copy(alpha = 0.4f)
+                                )
+                            )
+                        )
+                )
+
+                // Origin badge top-left
+                Box(
+                    modifier = Modifier
+                        .padding(12.dp)
+                        .align(Alignment.TopStart)
+                        .size(28.dp)
                         .clip(CircleShape)
-                        .background(if (isDark) DarkTextMuted else LightTextMuted)
-                )
-                Text(
-                    "👥 ${recipe.servings}",
-                    fontSize = 11.sp,
-                    color = if (isDark) DarkTextMuted else LightTextMuted,
-                    fontWeight = FontWeight.SemiBold
-                )
+                        .background((if (isMyRecipe) SuccessColor else SecondaryColor).copy(alpha = 0.9f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = if (isMyRecipe) Icons.Default.Person else Icons.Default.Public,
+                        contentDescription = if (isMyRecipe) "My Recipe" else "Discovered",
+                        tint = Color.White,
+                        modifier = Modifier.size(15.dp)
+                    )
+                }
+
+                // Category tag bottom-left on image
+                Box(
+                    modifier = Modifier
+                        .padding(12.dp)
+                        .align(Alignment.BottomStart)
+                        .clip(CircleShape)
+                        .background(PrimaryColor)
+                        .padding(horizontal = 10.dp, vertical = 4.dp)
+                ) {
+                    Text(
+                        text = recipe.category,
+                        color = Color.White,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+
+                // Difficulty badge top-right
+                Box(
+                    modifier = Modifier
+                        .padding(12.dp)
+                        .align(Alignment.TopEnd)
+                        .clip(CircleShape)
+                        .background(difficultyColor)
+                        .padding(horizontal = 10.dp, vertical = 4.dp)
+                ) {
+                    Text(
+                        text = recipe.difficulty,
+                        color = Color.White,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+
+            // Text info & stats panel
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                // Title and rating
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.Top
+                ) {
+                    Text(
+                        text = recipe.title,
+                        fontSize = 17.sp,
+                        fontWeight = FontWeight.Black,
+                        color = if (isDark) DarkTextMain else LightTextMain,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f),
+                        lineHeight = 22.sp
+                    )
+                    
+                    if (recipe.numRatings > 0) {
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(2.dp)
+                        ) {
+                            Text(
+                                text = "★",
+                                color = PrimaryColor,
+                                fontSize = 15.sp,
+                                modifier = Modifier.offset(y = (-1).dp)
+                            )
+                            Text(
+                                text = String.format(java.util.Locale.US, "%.1f", recipe.averageRating),
+                                fontSize = 13.sp,
+                                color = if (isDark) DarkTextMain else LightTextMain,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                }
+
+                // Brief description
+                if (recipe.description.isNotEmpty()) {
+                    Text(
+                        text = recipe.description,
+                        fontSize = 13.sp,
+                        color = if (isDark) DarkTextMuted else LightTextMuted,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        lineHeight = 18.sp
+                    )
+                }
+
+                // Row of basic stats: Time & Servings
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(16.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "⏱ ${recipe.prepTime + recipe.cookTime} min",
+                        fontSize = 12.sp,
+                        color = if (isDark) DarkTextMuted else LightTextMuted,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        text = "👥 ${recipe.servings} servings",
+                        fontSize = 12.sp,
+                        color = if (isDark) DarkTextMuted else LightTextMuted,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+
+                // Additional details at the bottom: Calories, diet details (Vegetarian, Vegan, Gluten-Free)
+                val hasNutritionalInfo = recipe.calories != null || recipe.protein != null || recipe.carbs != null || recipe.fat != null
+                val isVegetarian = recipe.tags.any { it.contains("vegeter", ignoreCase = true) || it.contains("vegetarian", ignoreCase = true) }
+                val isVegan = recipe.tags.any { it.contains("vegan", ignoreCase = true) }
+                val isGlutenFree = recipe.tags.any { it.contains("gluten", ignoreCase = true) || it.contains("gf", ignoreCase = true) }
+
+                if (hasNutritionalInfo || isVegetarian || isVegan || isGlutenFree) {
+                    HorizontalDivider(
+                        color = (if (isDark) DarkBorder else LightBorder).copy(alpha = 0.5f),
+                        thickness = 1.dp,
+                        modifier = Modifier.padding(vertical = 4.dp)
+                    )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        // Nutrition details on the left
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            if (recipe.calories != null) {
+                                Text(
+                                    text = "🔥 ${recipe.calories} kcal",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (isDark) DarkTextMain else LightTextMain
+                                )
+                            }
+                            if (recipe.protein != null) {
+                                Text(
+                                    text = "🥩 ${recipe.protein}g protein",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = if (isDark) DarkTextMuted else LightTextMuted
+                                )
+                            }
+                        }
+
+                        // Dietary labels on the right
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            if (isVegan) {
+                                Box(
+                                    modifier = Modifier
+                                        .clip(CircleShape)
+                                        .background(Color(0xFFE8F5E9))
+                                        .padding(horizontal = 10.dp, vertical = 3.dp)
+                                ) {
+                                    Text(
+                                        text = "🌱 Vegan",
+                                        color = Color(0xFF2E7D32),
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            } else if (isVegetarian) {
+                                Box(
+                                    modifier = Modifier
+                                        .clip(CircleShape)
+                                        .background(Color(0xFFE8F5E9))
+                                        .padding(horizontal = 10.dp, vertical = 3.dp)
+                                ) {
+                                    Text(
+                                        text = "🌱 Veg",
+                                        color = Color(0xFF2E7D32),
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+                            if (isGlutenFree) {
+                                Box(
+                                    modifier = Modifier
+                                        .clip(CircleShape)
+                                        .background(Color(0xFFFFF3E0))
+                                        .padding(horizontal = 10.dp, vertical = 3.dp)
+                                ) {
+                                    Text(
+                                        text = "🌾 GF",
+                                        color = Color(0xFFE65100),
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -453,7 +714,15 @@ private fun EmptyState(isFiltered: Boolean, isDark: Boolean, modifier: Modifier 
             verticalArrangement = Arrangement.spacedBy(12.dp),
             modifier = Modifier.padding(40.dp)
         ) {
-            Text(if (isFiltered) "🔍" else "🧑‍🍳", fontSize = 64.sp)
+            if (isFiltered) {
+                Text("🔍", fontSize = 64.sp)
+            } else {
+                Image(
+                    painter = painterResource(id = R.mipmap.ic_launcher),
+                    contentDescription = "App Icon",
+                    modifier = Modifier.size(72.dp).clip(RoundedCornerShape(16.dp))
+                )
+            }
             Text(
                 if (isFiltered) "No recipes found" else "Your cookbook is empty",
                 fontWeight = FontWeight.ExtraBold,
@@ -474,7 +743,7 @@ private fun EmptyState(isFiltered: Boolean, isDark: Boolean, modifier: Modifier 
 @Composable
 fun NetworkImage(url: String, modifier: Modifier = Modifier) {
     val context = LocalContext.current
-    val isDark = isSystemInDarkTheme()
+    val isDark = isAppInDarkTheme()
     var bitmap by remember(url) { mutableStateOf<ImageBitmap?>(null) }
     LaunchedEffect(url) {
         withContext(Dispatchers.IO) {
@@ -512,7 +781,8 @@ fun SettingsDialog(
     onDismiss: () -> Unit
 ) {
     var apiKeyInput by remember { mutableStateOf(settingsStore.getApiKey()) }
-    val isDark = isSystemInDarkTheme()
+    var themeInput by remember { mutableStateOf(settingsStore.getTheme()) }
+    val isDark = isAppInDarkTheme()
     val bgColor = if (isDark) DarkCardBg else LightCardBg
     val borderColor = if (isDark) DarkBorder else LightBorder
 
@@ -649,6 +919,52 @@ fun SettingsDialog(
                     )
                 }
 
+                // Theme Mode section
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        "Theme Mode",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 14.sp,
+                        color = if (isDark) DarkTextMain else LightTextMain
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        val options = listOf(
+                            "system" to "System",
+                            "light" to "Light",
+                            "dark" to "Dark"
+                        )
+                        options.forEach { (value, label) ->
+                            val isSelected = themeInput == value
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(40.dp)
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(
+                                        if (isSelected) PrimaryColor else (if (isDark) DarkBg else LightBg)
+                                    )
+                                    .border(
+                                        1.dp,
+                                        if (isSelected) PrimaryColor else borderColor,
+                                        RoundedCornerShape(10.dp)
+                                    )
+                                    .clickable { themeInput = value },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = label,
+                                    color = if (isSelected) Color.White else (if (isDark) DarkTextMain else LightTextMain),
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                    fontSize = 13.sp
+                                )
+                            }
+                        }
+                    }
+                }
+
                 // Info box
                 Box(
                     modifier = Modifier
@@ -683,6 +999,7 @@ fun SettingsDialog(
                         .background(PrimaryColor)
                         .clickable {
                             settingsStore.saveApiKey(apiKeyInput)
+                            settingsStore.saveTheme(themeInput)
                             onDismiss()
                         },
                     contentAlignment = Alignment.Center

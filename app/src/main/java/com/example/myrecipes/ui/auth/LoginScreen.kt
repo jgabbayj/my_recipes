@@ -25,6 +25,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.myrecipes.data.AuthManager
 import com.example.myrecipes.theme.*
+import com.example.myrecipes.R
+import androidx.compose.foundation.Image
+import androidx.compose.ui.res.painterResource
 import kotlinx.coroutines.launch
 
 @Composable
@@ -36,7 +39,7 @@ fun LoginScreen(
     val authManager = remember { AuthManager(context) }
     val coroutineScope = rememberCoroutineScope()
     var isLoading by remember { mutableStateOf(false) }
-    val isDark = isSystemInDarkTheme()
+    val isDark = isAppInDarkTheme()
 
     // Subtle pulsing animation on the logo
     val infiniteTransition = rememberInfiniteTransition(label = "logoAnim")
@@ -105,14 +108,18 @@ fun LoginScreen(
                     .border(1.5.dp, PrimaryColor.copy(alpha = 0.25f), RoundedCornerShape(32.dp)),
                 contentAlignment = Alignment.Center
             ) {
-                Text("🧑‍🍳", fontSize = 56.sp)
+                Image(
+                    painter = painterResource(id = R.mipmap.ic_launcher),
+                    contentDescription = "App Logo",
+                    modifier = Modifier.size(72.dp).clip(RoundedCornerShape(16.dp))
+                )
             }
 
             Spacer(modifier = Modifier.height(28.dp))
 
             // ── App Name ─────────────────────────────────────────────────
             Text(
-                text = "MyRecipes",
+                text = "Re-c-p",
                 fontSize = 38.sp,
                 fontWeight = FontWeight.Black,
                 color = PrimaryColor,
@@ -171,7 +178,7 @@ fun LoginScreen(
                                 isLoading = false
                                 result.fold(
                                     onSuccess = {
-                                        Toast.makeText(context, "Welcome, ${it.displayName ?: "Chef"}! 🧑‍🍳", Toast.LENGTH_SHORT).show()
+                                        Toast.makeText(context, "Welcome, ${it.displayName ?: "User"}!", Toast.LENGTH_SHORT).show()
                                         onLoginSuccess()
                                     },
                                     onFailure = { error ->

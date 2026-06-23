@@ -30,6 +30,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
@@ -41,6 +42,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.myrecipes.data.Recipe
 import com.example.myrecipes.data.RecipeStore
+import com.example.myrecipes.data.IngredientConverter
 import com.example.myrecipes.theme.*
 import java.util.Locale
 
@@ -52,7 +54,7 @@ fun CookModeScreen(
 ) {
     val context = LocalContext.current
     val recipeStore = remember { RecipeStore(context) }
-    val isDark = isSystemInDarkTheme()
+    val isDark = isAppInDarkTheme()
     var recipe by remember { mutableStateOf<Recipe?>(null) }
 
     var currentScreen by remember { mutableStateOf("checklist") }
@@ -274,6 +276,9 @@ private fun PrepChecklistContent(
     bgColor: Color,
     onStartCooking: () -> Unit
 ) {
+    var isImperial by remember { mutableStateOf(false) }
+    val isRecipeEnglish = !recipe.title.any { it in '\u0590'..'\u05FF' }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -294,6 +299,62 @@ private fun PrepChecklistContent(
             )
         }
 
+        if (isRecipeEnglish) {
+            Spacer(modifier = Modifier.height(12.dp))
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(cardBg)
+                    .border(1.dp, borderColor, RoundedCornerShape(16.dp))
+                    .padding(horizontal = 16.dp, vertical = 12.dp)
+            ) {
+                // Row 1: Unit System (Metric / Imperial)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Unit System",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = if (isDark) DarkTextMuted else LightTextMuted
+                    )
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Metric",
+                            fontSize = 11.sp,
+                            fontWeight = if (!isImperial) FontWeight.Bold else FontWeight.Normal,
+                            color = if (!isImperial) PrimaryColor else if (isDark) DarkTextMuted else LightTextMuted,
+                            modifier = Modifier.clickable { isImperial = false }
+                        )
+                        Switch(
+                            checked = isImperial,
+                            onCheckedChange = { isImperial = it },
+                            modifier = Modifier.scale(0.8f),
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = Color.White,
+                                checkedTrackColor = PrimaryColor,
+                                uncheckedThumbColor = if (isDark) DarkTextMuted else LightTextMuted,
+                                uncheckedTrackColor = borderColor.copy(alpha = 0.5f)
+                            )
+                        )
+                        Text(
+                            text = "Imperial",
+                            fontSize = 11.sp,
+                            fontWeight = if (isImperial) FontWeight.Bold else FontWeight.Normal,
+                            color = if (isImperial) PrimaryColor else if (isDark) DarkTextMuted else LightTextMuted,
+                            modifier = Modifier.clickable { isImperial = true }
+                        )
+                    }
+                }
+            }
+        }
+
         Spacer(modifier = Modifier.height(16.dp))
 
         Column(
@@ -308,6 +369,13 @@ private fun PrepChecklistContent(
                     if (isDark) Color(0xFF1E2A1A) else Color(0xFFF0FFF4)
                 } else cardBg
                 val rowBorder = if (isChecked) SuccessColor.copy(alpha = 0.5f) else borderColor
+
+                val convertedText = if (isRecipeEnglish) {
+                    val system = if (isImperial) IngredientConverter.UnitSystem.IMPERIAL else IngredientConverter.UnitSystem.METRIC
+                    IngredientConverter.convertIngredient(ing, system)
+                } else {
+                    ing
+                }
 
                 Row(
                     modifier = Modifier
@@ -338,7 +406,7 @@ private fun PrepChecklistContent(
                         }
                     }
                     Text(
-                        text = ing,
+                        text = convertedText,
                         fontSize = 14.sp,
                         fontWeight = FontWeight.SemiBold,
                         color = if (isChecked) {

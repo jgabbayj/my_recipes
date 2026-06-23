@@ -20,7 +20,13 @@ data class Recipe(
     val protein: Int? = null,
     val fat: Int? = null,
     val tags: List<String> = emptyList(),
-    val createdAt: Long = System.currentTimeMillis()
+    val createdAt: Long = System.currentTimeMillis(),
+    val userId: String = "",
+    val ratings: Map<String, Int> = emptyMap(),
+    val averageRating: Double = 0.0,
+    val numRatings: Int = 0,
+    val link: String? = null,
+    val ingredientsEnglish: List<String> = emptyList()
 ) {
     fun toJsonObject(): JSONObject {
         val json = JSONObject()
@@ -52,6 +58,20 @@ data class Recipe(
         json.put("tags", tagsArray)
         
         json.put("createdAt", createdAt)
+        json.put("userId", userId)
+        
+        val ratingsJson = JSONObject()
+        ratings.forEach { (k, v) -> ratingsJson.put(k, v) }
+        json.put("ratings", ratingsJson)
+        json.put("averageRating", averageRating)
+        json.put("numRatings", numRatings)
+        if (link != null) {
+            json.put("link", link)
+        }
+        
+        val ingredientsEnglishArray = JSONArray()
+        ingredientsEnglish.forEach { ingredientsEnglishArray.put(it) }
+        json.put("ingredientsEnglish", ingredientsEnglishArray)
         
         return json
     }
@@ -75,6 +95,24 @@ data class Recipe(
             if (tagsArray != null) {
                 for (i in 0 until tagsArray.length()) {
                     tagsList.add(tagsArray.getString(i))
+                }
+            }
+
+            val ratingsMap = mutableMapOf<String, Int>()
+            val ratingsObj = json.optJSONObject("ratings")
+            if (ratingsObj != null) {
+                val keys = ratingsObj.keys()
+                while (keys.hasNext()) {
+                    val key = keys.next()
+                    ratingsMap[key] = ratingsObj.getInt(key)
+                }
+            }
+
+            val ingredientsEnglishArray = json.optJSONArray("ingredientsEnglish")
+            val ingredientsEnglishList = mutableListOf<String>()
+            if (ingredientsEnglishArray != null) {
+                for (i in 0 until ingredientsEnglishArray.length()) {
+                    ingredientsEnglishList.add(ingredientsEnglishArray.getString(i))
                 }
             }
             
@@ -102,7 +140,13 @@ data class Recipe(
                     } else {
                         0L
                     }
-                }
+                },
+                userId = json.optString("userId", ""),
+                ratings = ratingsMap,
+                averageRating = json.optDouble("averageRating", 0.0),
+                numRatings = json.optInt("numRatings", 0),
+                link = if (json.has("link") && !json.isNull("link")) json.getString("link") else null,
+                ingredientsEnglish = ingredientsEnglishList
             )
         }
     }

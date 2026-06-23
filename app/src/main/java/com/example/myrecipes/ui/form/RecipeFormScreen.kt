@@ -45,6 +45,7 @@ fun RecipeFormScreen(
     recipeId: String?,
     onBack: () -> Unit,
     onSave: () -> Unit,
+    initialUrl: String? = null,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -70,14 +71,16 @@ fun RecipeFormScreen(
     var protein by remember { mutableStateOf("") }
     var fat by remember { mutableStateOf("") }
     var tagsInput by remember { mutableStateOf("") }
+    var link by remember { mutableStateOf("") }
     
     val ingredients = remember { mutableStateListOf("") }
+    val ingredientsEnglish = remember { mutableStateListOf<String>() }
     val steps = remember { mutableStateListOf("") }
     var newlyAddedIngredientIndex by remember { mutableStateOf<Int?>(null) }
     var newlyAddedStepIndex by remember { mutableStateOf<Int?>(null) }
 
     // Parser States
-    var url by remember { mutableStateOf("") }
+    var url by remember { mutableStateOf(initialUrl ?: "") }
     var rawText by remember { mutableStateOf("") }
     var isParsing by remember { mutableStateOf(false) }
     var parseError by remember { mutableStateOf<String?>(null) }
@@ -101,8 +104,11 @@ fun RecipeFormScreen(
                 protein = r.protein?.toString() ?: ""
                 fat = r.fat?.toString() ?: ""
                 tagsInput = r.tags.joinToString(", ")
+                link = r.link ?: ""
                 ingredients.clear()
                 ingredients.addAll(r.ingredients)
+                ingredientsEnglish.clear()
+                ingredientsEnglish.addAll(r.ingredientsEnglish)
                 steps.clear()
                 steps.addAll(r.steps)
             }
@@ -126,8 +132,11 @@ fun RecipeFormScreen(
         protein = parsed.protein?.toString() ?: ""
         fat = parsed.fat?.toString() ?: ""
         tagsInput = parsed.tags.joinToString(", ")
+        link = parsed.link ?: ""
         ingredients.clear()
         ingredients.addAll(parsed.ingredients)
+        ingredientsEnglish.clear()
+        ingredientsEnglish.addAll(parsed.ingredientsEnglish)
         steps.clear()
         steps.addAll(parsed.steps)
     }
@@ -239,7 +248,7 @@ fun RecipeFormScreen(
                             )
 
                             if (apiKey.isEmpty()) {
-                                val warnBg = if (isSystemInDarkTheme()) DarkPrimaryLight else LightPrimaryLight
+                                val warnBg = if (isAppInDarkTheme()) DarkPrimaryLight else LightPrimaryLight
                                 Surface(
                                     shape = RoundedCornerShape(12.dp),
                                     color = warnBg,
@@ -414,6 +423,8 @@ fun RecipeFormScreen(
                             FormTextField(label = "Description", value = description, onValueChange = { description = it }, placeholder = "Tell something about this recipe...", singleLine = false)
 
                             FormTextField(label = "Cover Image URL", value = image, onValueChange = { image = it }, placeholder = "https://images.unsplash.com/photo-...")
+
+                            FormTextField(label = "Recipe Source URL (Link)", value = link, onValueChange = { link = it }, placeholder = "https://example.com/recipe-url")
 
                             // Category & Difficulty Rows
                             Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
@@ -720,7 +731,9 @@ fun RecipeFormScreen(
                                 carbs = carbs.toIntOrNull(),
                                 protein = protein.toIntOrNull(),
                                 fat = fat.toIntOrNull(),
-                                tags = tagsInput.split(",").map { it.trim() }.filter { it.isNotEmpty() }
+                                tags = tagsInput.split(",").map { it.trim() }.filter { it.isNotEmpty() },
+                                link = link.trim().takeIf { it.isNotEmpty() },
+                                ingredientsEnglish = ingredientsEnglish
                             )
 
                             coroutineScope.launch {
