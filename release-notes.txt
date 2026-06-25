@@ -1,0 +1,10 @@
+Pre-Alpha Version (1.0) - Initial Internal Testing
+
+Key Features in this build:
+- **Recipe Dashboard**: Browse, filter, and organize your favorite recipes.
+- **Smart Recipe Form**: Add and edit recipes, powered by Gemini-based parsing for ingredients and steps.
+- **Interactive Cooking Mode**: Step-by-step guidance designed to make cooking easy and hands-free.
+- **Secure Authentication**: Built-in Firebase Authentication and Google Sign-In support.
+- **Cloud Database**: Real-time recipe syncing powered by Firestore.
+
+Note: This is an early pre-alpha build for internal testing. Some UI elements, integrations, and functions are under active development and subject to change. Please report any bugs or feedback to the development team.

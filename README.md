@@ -1,6 +1,6 @@
-# My Recipes
+# Morsel
 
-My Recipes is a native Android recipe manager built with Kotlin and Jetpack Compose. It supports recipe browsing, editing, cook mode, Firebase-backed authentication and storage, and Gemini-assisted parsing for turning free-form recipe text into structured ingredients and steps.
+Morsel is a native Android recipe manager built with Kotlin and Jetpack Compose. It supports recipe browsing, editing, cook mode, Firebase-backed authentication and storage, and Gemini-assisted parsing for turning free-form recipe text into structured ingredients and steps.
 
 ## Features
 
