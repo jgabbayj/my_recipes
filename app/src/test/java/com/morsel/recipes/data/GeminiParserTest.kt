@@ -177,4 +177,26 @@ class GeminiParserTest {
         val actual = GeminiParser.extractImageFromHtml(html, "https://example.com/recipe/lasagna")
         assertEquals("https://example.com/graph-image.jpg", actual)
     }
+
+    @Test
+    fun extractOembedTitle_extractsCorrectly() {
+        val html = """
+            <html>
+            <head>
+                <link rel="alternate" href="https://graph.facebook.com/oembed" title="Lemon Butter Pasta &#x5e4;&#x5e1;&#x5d8;&#x5d4;" type="application/json+oembed" />
+            </head>
+            </html>
+        """.trimIndent()
+        val expected = "Lemon Butter Pasta פסטה"
+        val actual = GeminiParser.extractOembedTitle(html)
+        assertEquals(expected, actual)
+    }
+
+    @Test
+    fun decodeHtml_decodesEntitiesCorrectly() {
+        val input = "Lemon &amp; Butter &quot;Pasta&quot; &#x5e4;&#x5e1;&#x5d8;&#x5d4; &#127819;"
+        val expected = "Lemon & Butter \"Pasta\" פסטה 🍋"
+        val actual = GeminiParser.decodeHtml(input)
+        assertEquals(expected, actual)
+    }
 }

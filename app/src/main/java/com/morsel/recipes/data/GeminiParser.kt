@@ -124,13 +124,13 @@ object GeminiParser {
             }
 
             val isYouTube = urlLower.contains("youtube.com") || urlLower.contains("youtu.be")
+            val isFacebookOrInstagram = urlLower.contains("facebook.com") || urlLower.contains("instagram.com")
             val contentToParse = if (isYouTube) {
                 val desc = extractYouTubeDescription(htmlContent)
-                if (desc.isEmpty()) {
-                    htmlContent
-                } else {
-                    desc
-                }
+                if (desc.isEmpty()) htmlContent else desc
+            } else if (isFacebookOrInstagram) {
+                val desc = extractOembedTitle(htmlContent)
+                if (desc.isEmpty()) htmlContent else desc
             } else {
                 htmlContent
             }
@@ -215,6 +215,67 @@ object GeminiParser {
             .replace("\\t", "\t")
             .replace("\\\"", "\"")
             .replace("\\\\", "\\")
+    }
+
+    fun extractOembedTitle(html: String): String {
+        // Find title attribute in <link rel="alternate" type="application/json+oembed" ...>
+        // Tag format is usually: <link rel="alternate" href="..." title="..." type="application/json+oembed" />
+        // Attributes can be in any order, so search for all link tags and match properties.
+        val linkRegex = Regex("""<link\b[^>]*>""", RegexOption.IGNORE_CASE)
+        val matches = linkRegex.findAll(html)
+        for (m in matches) {
+            val tag = m.value
+            if (tag.contains("type=\"application/json+oembed\"", ignoreCase = true) || 
+                tag.contains("type='application/json+oembed'", ignoreCase = true) ||
+                tag.contains("type=application/json+oembed", ignoreCase = true)
+            ) {
+                // Extract title attribute value
+                val titleRegex = Regex("""title=["']([\s\S]*?)["']""", RegexOption.IGNORE_CASE)
+                val titleMatch = titleRegex.find(tag)
+                if (titleMatch != null) {
+                    val rawTitle = titleMatch.groupValues[1]
+                    return decodeHtml(rawTitle)
+                }
+            }
+        }
+        return ""
+    }
+
+    fun decodeHtml(text: String): String {
+        var result = text
+            .replace("&quot;", "\"")
+            .replace("&amp;", "&")
+            .replace("&lt;", "<")
+            .replace("&gt;", ">")
+            .replace("&#39;", "'")
+            .replace("&#x27;", "'")
+            .replace("&nbsp;", " ")
+        
+        // Match hex entities: &#x...;
+        val hexRegex = Regex("""&#[xX]([0-9a-fA-F]+);""")
+        result = hexRegex.replace(result) { matchResult ->
+            val hexVal = matchResult.groupValues[1]
+            try {
+                val codePoint = hexVal.toInt(16)
+                String(Character.toChars(codePoint))
+            } catch (e: Exception) {
+                matchResult.value
+            }
+        }
+        
+        // Match decimal entities: &#...;
+        val decRegex = Regex("""&#([0-9]+);""")
+        result = decRegex.replace(result) { matchResult ->
+            val decVal = matchResult.groupValues[1]
+            try {
+                val codePoint = decVal.toInt()
+                String(Character.toChars(codePoint))
+            } catch (e: Exception) {
+                matchResult.value
+            }
+        }
+        
+        return result
     }
 
     private fun cleanHtml(html: String): String {
@@ -396,7 +457,16 @@ object GeminiParser {
         connection.requestMethod = "GET"
         connection.connectTimeout = 10000
         connection.readTimeout = 10000
-        connection.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
+        
+        val urlLower = urlString.lowercase()
+        val isSocial = urlLower.contains("facebook.com") || urlLower.contains("instagram.com")
+        if (isSocial) {
+            // Facebook/Instagram blocks standard web browsers from scraping without login.
+            // Using a crawler bot user-agent prompts them to return a lightweight oEmbed meta page instead of a 400 block.
+            connection.setRequestProperty("User-Agent", "facebookexternalhit/1.1")
+        } else {
+            connection.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
+        }
         
         val responseCode = connection.responseCode
         if (responseCode == HttpURLConnection.HTTP_OK) {
