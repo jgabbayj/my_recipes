@@ -320,6 +320,12 @@ object GeminiParser {
             val prompt = """
                 You are an expert recipe parser. Your task is to extract recipe information from the provided text or HTML content and return it as a structured JSON object.
                 
+                First, verify if the provided text contains a valid recipe. A valid recipe MUST contain both:
+                1. A list of ingredients (ideally with quantities/amounts).
+                2. Step-by-step recipe instructions/steps.
+                
+                If the text does not contain a valid recipe (e.g. it is just a general discussion, an error page, a chat log, a login prompt, or lacks a list of ingredients or lacks instructions), you must set the "isValidRecipe" field to false and explain the reason in "validationError". In this case, you can leave the other fields empty or default.
+                
                 The text or HTML content is:
                 -----------------
                 $truncatedText
@@ -327,6 +333,8 @@ object GeminiParser {
         
                 Please extract the following fields and return exactly this JSON schema:
                 {
+                  "isValidRecipe": true if the text contains a valid recipe with both ingredients and instructions, false otherwise (boolean),
+                  "validationError": "If isValidRecipe is false, provide a clear explanation in the language of the source text explaining why the text is not a valid recipe (e.g., missing ingredients or missing steps). Otherwise, leave empty (string)",
                   "title": "Title of the recipe (string)",
                   "description": "A brief summary of the recipe (string)",
                   "image": "URL of the recipe main image if found, otherwise leave empty or use a placeholder (string)",
@@ -364,6 +372,12 @@ object GeminiParser {
                 val cleanedText = cleanJsonString(responseText)
                 val recipeData = JSONObject(cleanedText)
                 
+                val isValid = recipeData.optBoolean("isValidRecipe", true)
+                if (!isValid) {
+                    val errorMsg = recipeData.optString("validationError", "No valid recipe found in the content (must contain ingredients and instructions).")
+                    return@withContext ParseResult.Error("INVALID_RECIPE", errorMsg)
+                }
+                
                 val title = recipeData.optString("title", "Parsed Recipe")
                 val description = recipeData.optString("description", "Parsed using Gemini AI")
                 val image = recipeData.optString("image", "https://images.unsplash.com/photo-1495521821757-a1efb6729352?auto=format&fit=crop&w=800&q=80")
@@ -391,6 +405,16 @@ object GeminiParser {
                     for (i in 0 until stepsArray.length()) {
                         steps.add(stepsArray.getString(i))
                     }
+                }
+                
+                if (ingredients.isEmpty() || steps.isEmpty()) {
+                    val missingParts = if (ingredients.isEmpty() && steps.isEmpty()) "both ingredients and instructions"
+                                       else if (ingredients.isEmpty()) "ingredients list"
+                                       else "recipe instructions/steps"
+                    return@withContext ParseResult.Error(
+                        "INVALID_RECIPE",
+                        "The parsed content is missing required recipe components: $missingParts."
+                    )
                 }
                 
                 val calories = if (recipeData.has("calories")) recipeData.getInt("calories") else null
