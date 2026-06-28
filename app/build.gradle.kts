@@ -31,7 +31,8 @@ android {
         minSdk = 24
         targetSdk = 36
         val runNumber = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 1
-        versionCode = runNumber
+        val runAttempt = System.getenv("GITHUB_RUN_ATTEMPT")?.toIntOrNull() ?: 1
+        versionCode = runNumber * 100 + runAttempt
         versionName = "1.0.$runNumber"
 
         buildConfigField("String", "GEMINI_API_KEY", "\"$geminiApiKey\"")
